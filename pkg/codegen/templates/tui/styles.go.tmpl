@@ -1,0 +1,38 @@
+package tui
+
+import "github.com/charmbracelet/lipgloss"
+
+var (
+	// Colors
+	primaryColor   = lipgloss.Color("12")
+	secondaryColor = lipgloss.Color("8")
+	successColor   = lipgloss.Color("10")
+	errorColor     = lipgloss.Color("9")
+	warningColor   = lipgloss.Color("11")
+
+	// Base styles
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(primaryColor).
+			MarginBottom(1)
+
+	subtitleStyle = lipgloss.NewStyle().
+			Foreground(secondaryColor)
+
+	selectedStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(primaryColor)
+
+	normalStyle = lipgloss.NewStyle()
+
+	statusBarStyle = lipgloss.NewStyle().
+			Foreground(secondaryColor).
+			MarginTop(1)
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(errorColor)
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(secondaryColor).
+			MarginTop(1)
+)

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Run all {{.Name}} CLI smoke tests.
+# Usage:
+#   ./tests/run-all.sh [binary]
+#   {{.EnvPrefix}}_LIVE_TESTS=1 ./tests/run-all.sh
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN_ARG="${1:-}"
+
+TOTAL=0
+PASSED=0
+FAILED=0
+FAILED_SCRIPTS=()
+
+echo "========================================"
+echo "  {{.Name}} CLI Smoke Tests"
+echo "========================================"
+if [[ "{{printf "${%s_LIVE_TESTS:-0}" .EnvPrefix}}" == "1" ]]; then
+  if [[ "{{printf "${%s_ADMIN_TESTS:-0}" .EnvPrefix}}" == "1" ]]; then
+    echo "  Mode: offline + live + admin"
+  else
+    echo "  Mode: offline + live (no admin CRUD)"
+  fi
+else
+  echo "  Mode: offline only"
+fi
+echo ""
+
+for script in "$SCRIPT_DIR"/test-*.sh; do
+  name="$(basename "$script")"
+  ((TOTAL++))
+  echo "--- $name ---"
+  if bash "$script" "$BIN_ARG"; then
+    ((PASSED++))
+  else
+    ((FAILED++))
+    FAILED_SCRIPTS+=("$name")
+  fi
+  echo ""
+done
+
+echo "========================================"
+echo "  Overall: $TOTAL scripts, $PASSED passed, $FAILED failed"
+echo "========================================"
+
+if [[ $FAILED -gt 0 ]]; then
+  echo "  Failed scripts:"
+  for s in "${FAILED_SCRIPTS[@]}"; do
+    echo "    - $s"
+  done
+  exit 1
+fi

@@ -1,0 +1,71 @@
+package tui
+
+import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// FilterModel provides a text input for filtering table rows.
+type FilterModel struct {
+	input   textinput.Model
+	active  bool
+}
+
+// NewFilterModel creates a new filter component.
+func NewFilterModel() FilterModel {
+	ti := textinput.New()
+	ti.Placeholder = "Type to filter..."
+	ti.CharLimit = 64
+	return FilterModel{input: ti}
+}
+
+// Activate enables the filter input.
+func (f *FilterModel) Activate() {
+	f.active = true
+	f.input.Focus()
+}
+
+// Deactivate disables the filter input.
+func (f *FilterModel) Deactivate() {
+	f.active = false
+	f.input.Blur()
+	f.input.SetValue("")
+}
+
+// IsActive returns whether the filter is currently active.
+func (f FilterModel) IsActive() bool {
+	return f.active
+}
+
+// Value returns the current filter text.
+func (f FilterModel) Value() string {
+	return f.input.Value()
+}
+
+// Matches checks if a string matches the current filter.
+func (f FilterModel) Matches(s string) bool {
+	if !f.active || f.input.Value() == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(s), strings.ToLower(f.input.Value()))
+}
+
+// Update handles input events for the filter.
+func (f FilterModel) Update(msg tea.Msg) (FilterModel, tea.Cmd) {
+	if !f.active {
+		return f, nil
+	}
+	var cmd tea.Cmd
+	f.input, cmd = f.input.Update(msg)
+	return f, cmd
+}
+
+// View renders the filter input.
+func (f FilterModel) View() string {
+	if !f.active {
+		return ""
+	}
+	return f.input.View()
+}

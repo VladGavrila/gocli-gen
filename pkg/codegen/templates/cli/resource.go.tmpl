@@ -1,0 +1,250 @@
+package cli
+
+{{- $hasList := hasAction .Resource "list"}}
+{{- $hasGet := hasAction .Resource "get"}}
+{{- $hasCreate := hasAction .Resource "create"}}
+{{- $hasUpdate := hasAction .Resource "update"}}
+{{- $hasDelete := hasAction .Resource "delete"}}
+{{- $hasReadOrWrite := or $hasList $hasGet $hasCreate $hasUpdate $hasDelete}}
+
+import (
+{{- if cliNeedsFmt .Resource}}
+	"fmt"
+{{- end}}
+{{- if $hasReadOrWrite}}
+	"{{.Project.Module}}/internal/output"
+{{- end}}
+	"github.com/spf13/cobra"
+)
+
+func init() {
+	rootCmd.AddCommand({{.Resource.CLIName}}Cmd)
+{{- if hasAction .Resource "list"}}
+	{{.Resource.CLIName}}Cmd.AddCommand({{.Resource.CLIName}}ListCmd)
+{{- end}}
+{{- if hasAction .Resource "get"}}
+	{{.Resource.CLIName}}Cmd.AddCommand({{.Resource.CLIName}}GetCmd)
+{{- end}}
+{{- if hasAction .Resource "create"}}
+	{{.Resource.CLIName}}Cmd.AddCommand({{.Resource.CLIName}}CreateCmd)
+	{{- if .Resource.WriteFlag}}
+	{{.Resource.CLIName}}CreateCmd.Flags().StringP("{{.Resource.WriteFlag}}", "r", "", "Reason for creation")
+	_ = {{.Resource.CLIName}}CreateCmd.MarkFlagRequired("{{.Resource.WriteFlag}}")
+	{{- end}}
+{{- end}}
+{{- if hasAction .Resource "update"}}
+	{{.Resource.CLIName}}Cmd.AddCommand({{.Resource.CLIName}}UpdateCmd)
+	{{- if .Resource.WriteFlag}}
+	{{.Resource.CLIName}}UpdateCmd.Flags().StringP("{{.Resource.WriteFlag}}", "r", "", "Reason for update")
+	_ = {{.Resource.CLIName}}UpdateCmd.MarkFlagRequired("{{.Resource.WriteFlag}}")
+	{{- end}}
+{{- end}}
+{{- if hasAction .Resource "delete"}}
+	{{.Resource.CLIName}}Cmd.AddCommand({{.Resource.CLIName}}DeleteCmd)
+	{{- if .Resource.WriteFlag}}
+	{{.Resource.CLIName}}DeleteCmd.Flags().StringP("{{.Resource.WriteFlag}}", "r", "", "Reason for deletion")
+	_ = {{.Resource.CLIName}}DeleteCmd.MarkFlagRequired("{{.Resource.WriteFlag}}")
+	{{- end}}
+{{- end}}
+}
+
+var {{.Resource.CLIName}}Cmd = &cobra.Command{
+	Use:   "{{.Resource.CLIName}}",
+{{- if .Resource.Aliases}}
+	Aliases: []string{ {{- range $i, $a := .Resource.Aliases}}{{if $i}}, {{end}}"{{$a}}"{{end -}} },
+{{- end}}
+	Short: "Manage {{.Resource.Plural}}",
+}
+{{if hasAction .Resource "list"}}
+{{- $listAction := getAction .Resource "list"}}
+var {{.Resource.CLIName}}ListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List {{.Resource.Plural}}",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := newService()
+		if err != nil {
+			return err
+		}
+{{- if isScoped .Resource}}
+
+		project, err := requireProject()
+		if err != nil {
+			return err
+		}
+
+		data, err := svc.{{.Resource.GoPlural}}.List(project)
+{{- else}}
+
+		data, err := svc.{{.Resource.GoPlural}}.List()
+{{- end}}
+		if err != nil {
+			return err
+		}
+
+{{- if hasTypedResponse $listAction}}
+{{- $respSchema := schemaByGoName (responseGoType $listAction)}}
+{{- $arrayField := listArrayField $respSchema}}
+{{- if $arrayField}}
+{{- $elemType := arrayElemType $arrayField}}
+{{- $elemSchema := schemaByGoName $elemType}}
+{{- $leafs := leafFields $elemSchema}}
+{{- if $leafs}}
+		if getOutputFormat() == "json" {
+			return output.PrintItem(getOutputFormat(), data)
+		}
+		headers := []string{ {{- range $i, $f := $leafs}}{{if $i}}, {{end}}"{{$f.GoName}}"{{end -}} }
+		var rows [][]string
+		for _, item := range data.{{$arrayField.GoName}} {
+			rows = append(rows, []string{
+{{- range $leafs}}
+				{{fieldAccessExpr .}},
+{{- end}}
+			})
+		}
+		return output.Print(getOutputFormat(), headers, rows)
+{{- else}}
+		return output.PrintItem(getOutputFormat(), data)
+{{- end}}
+{{- else}}
+		return output.PrintItem(getOutputFormat(), data)
+{{- end}}
+{{- else}}
+		return output.PrintItem(getOutputFormat(), data)
+{{- end}}
+	},
+}
+{{end}}
+{{- if hasAction .Resource "get"}}
+{{- $getAction := getAction .Resource "get"}}
+var {{.Resource.CLIName}}GetCmd = &cobra.Command{
+	Use:   "get <id>",
+	Short: "Get a {{.Resource.Name}} by ID",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := newService()
+		if err != nil {
+			return err
+		}
+{{- if isScoped .Resource}}
+
+		project, err := requireProject()
+		if err != nil {
+			return err
+		}
+
+		data, err := svc.{{.Resource.GoPlural}}.Get(project, args[0])
+{{- else}}
+
+		data, err := svc.{{.Resource.GoPlural}}.Get(args[0])
+{{- end}}
+		if err != nil {
+			return err
+		}
+
+{{- if hasTypedResponse $getAction}}
+{{- $respSchema := schemaByGoName (responseGoType $getAction)}}
+{{- $leafs := leafFields $respSchema}}
+{{- if $leafs}}
+		if getOutputFormat() == "json" {
+			return output.PrintItem(getOutputFormat(), data)
+		}
+		headers := []string{"Field", "Value"}
+		rows := [][]string{
+{{- range $leafs}}
+			{"{{.GoName}}", {{fieldAccessExprData .}}},
+{{- end}}
+		}
+		return output.Print(getOutputFormat(), headers, rows)
+{{- else}}
+		return output.PrintItem(getOutputFormat(), data)
+{{- end}}
+{{- else}}
+		return output.PrintItem(getOutputFormat(), data)
+{{- end}}
+	},
+}
+{{end}}
+{{- if hasAction .Resource "create"}}
+var {{.Resource.CLIName}}CreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a {{.Resource.Name}}",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := newService()
+		if err != nil {
+			return err
+		}
+{{- if isScoped .Resource}}
+
+		project, err := requireProject()
+		if err != nil {
+			return err
+		}
+
+		data, err := svc.{{.Resource.GoPlural}}.Create(project, nil)
+{{- else}}
+
+		data, err := svc.{{.Resource.GoPlural}}.Create(nil)
+{{- end}}
+		if err != nil {
+			return err
+		}
+
+		return output.PrintItem(getOutputFormat(), data)
+	},
+}
+{{end}}
+{{- if hasAction .Resource "update"}}
+var {{.Resource.CLIName}}UpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Update a {{.Resource.Name}}",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := newService()
+		if err != nil {
+			return err
+		}
+{{- if isScoped .Resource}}
+
+		project, err := requireProject()
+		if err != nil {
+			return err
+		}
+
+		data, err := svc.{{.Resource.GoPlural}}.Update(project, args[0], nil)
+{{- else}}
+
+		data, err := svc.{{.Resource.GoPlural}}.Update(args[0], nil)
+{{- end}}
+		if err != nil {
+			return err
+		}
+
+		return output.PrintItem(getOutputFormat(), data)
+	},
+}
+{{end}}
+{{- if hasAction .Resource "delete"}}
+var {{.Resource.CLIName}}DeleteCmd = &cobra.Command{
+	Use:   "delete <id>",
+	Short: "Delete a {{.Resource.Name}}",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := newService()
+		if err != nil {
+			return err
+		}
+{{- if isScoped .Resource}}
+
+		project, err := requireProject()
+		if err != nil {
+			return err
+		}
+
+		return svc.{{.Resource.GoPlural}}.Delete(project, args[0])
+{{- else}}
+
+		return svc.{{.Resource.GoPlural}}.Delete(args[0])
+{{- end}}
+	},
+}
+{{end}}

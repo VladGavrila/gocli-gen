@@ -1,0 +1,54 @@
+package output
+
+import "fmt"
+
+// Format represents a supported output format.
+type Format string
+
+const (
+	FormatJSON  Format = "json"
+	FormatTable Format = "table"
+	FormatText  Format = "text"
+)
+
+// Formatter renders data in a specific format.
+type Formatter interface {
+	FormatItem(v any) (string, error)
+	FormatList(headers []string, rows [][]string) (string, error)
+}
+
+// New returns a Formatter for the given format.
+func New(format string) Formatter {
+	switch Format(format) {
+	case FormatJSON:
+		return &JSONFormatter{}
+	case FormatText:
+		return &TextFormatter{}
+	case FormatTable:
+		return &TableFormatter{}
+	default:
+		return &TableFormatter{}
+	}
+}
+
+// Print formats and prints data using the given format string.
+func Print(format string, headers []string, rows [][]string) error {
+	f := New(format)
+	out, err := f.FormatList(headers, rows)
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
+	return nil
+}
+
+// PrintItem formats and prints a single item using the given format string.
+func PrintItem(format string, v any) error {
+	f := New(format)
+	out, err := f.FormatItem(v)
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
+	return nil
+}

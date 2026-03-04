@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Smoke tests for {{.Project.Name}} {{.Resource.CLIName}} commands.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/helpers.sh"
+resolve_bin "$1"
+
+# ===========================================================================
+# Help tests (always run)
+# ===========================================================================
+
+assert "{{.Resource.CLIName}} --help" "$BIN" {{.Resource.CLIName}} --help
+{{- if hasAction .Resource "list"}}
+assert "{{.Resource.CLIName}} list --help" "$BIN" {{.Resource.CLIName}} list --help
+{{- end}}
+{{- if hasAction .Resource "get"}}
+assert "{{.Resource.CLIName}} get --help" "$BIN" {{.Resource.CLIName}} get --help
+{{- end}}
+{{- if hasAction .Resource "create"}}
+assert "{{.Resource.CLIName}} create --help" "$BIN" {{.Resource.CLIName}} create --help
+{{- end}}
+{{- if hasAction .Resource "update"}}
+assert "{{.Resource.CLIName}} update --help" "$BIN" {{.Resource.CLIName}} update --help
+{{- end}}
+{{- if hasAction .Resource "delete"}}
+assert "{{.Resource.CLIName}} delete --help" "$BIN" {{.Resource.CLIName}} delete --help
+{{- end}}
+
+# ===========================================================================
+# Validation tests (always run)
+# ===========================================================================
+{{if hasAction .Resource "get"}}
+assert_fail "{{.Resource.CLIName}} get requires args" "$BIN" {{.Resource.CLIName}} get
+{{- end}}
+{{- if hasAction .Resource "delete"}}
+assert_fail "{{.Resource.CLIName}} delete requires args" "$BIN" {{.Resource.CLIName}} delete
+{{- end}}
+
+# ===========================================================================
+# Live tests (gated)
+# ===========================================================================
+
+if skip_live; then
+  echo "Skipping live tests (set {{.Project.EnvPrefix}}_LIVE_TESTS=1 to enable)"
+fi
+
+print_report

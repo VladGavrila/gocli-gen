@@ -1,0 +1,310 @@
+package service
+
+{{- $hasList := hasAction .Resource "list"}}
+{{- $hasGet := hasAction .Resource "get"}}
+{{- $hasCreate := hasAction .Resource "create"}}
+{{- $hasUpdate := hasAction .Resource "update"}}
+{{- $hasDelete := hasAction .Resource "delete"}}
+{{- $hasAny := or $hasList $hasGet $hasCreate $hasUpdate $hasDelete}}
+{{- $hasTyped := anyActionHasTypedResponse .Resource}}
+
+import (
+{{- if $hasAny}}
+	"encoding/json"
+	"fmt"
+	"net/url"
+{{- end}}
+{{- if $hasTyped}}
+
+	"{{.Project.Module}}/internal/api"
+{{- end}}
+
+	"{{.Project.Module}}/internal/client"
+)
+
+// {{.Resource.GoName}}Service manages {{.Resource.Name}} operations.
+type {{.Resource.GoName}}Service interface {
+{{- if hasAction .Resource "list"}}
+	{{- $listAction := getAction .Resource "list"}}
+	{{- if isScoped .Resource}}
+	{{- if hasTypedResponse $listAction}}
+	List({{.Resource.Scope}} string) (*api.{{responseGoType $listAction}}, error)
+	{{- else}}
+	List({{.Resource.Scope}} string) (json.RawMessage, error)
+	{{- end}}
+	{{- else}}
+	{{- if hasTypedResponse $listAction}}
+	List() (*api.{{responseGoType $listAction}}, error)
+	{{- else}}
+	List() (json.RawMessage, error)
+	{{- end}}
+	{{- end}}
+{{- end}}
+{{- if hasAction .Resource "get"}}
+	{{- $getAction := getAction .Resource "get"}}
+	{{- if isScoped .Resource}}
+	{{- if hasTypedResponse $getAction}}
+	Get({{.Resource.Scope}} string, id string) (*api.{{responseGoType $getAction}}, error)
+	{{- else}}
+	Get({{.Resource.Scope}} string, id string) (json.RawMessage, error)
+	{{- end}}
+	{{- else}}
+	{{- if hasTypedResponse $getAction}}
+	Get(id string) (*api.{{responseGoType $getAction}}, error)
+	{{- else}}
+	Get(id string) (json.RawMessage, error)
+	{{- end}}
+	{{- end}}
+{{- end}}
+{{- if hasAction .Resource "create"}}
+	{{- $createAction := getAction .Resource "create"}}
+	{{- if isScoped .Resource}}
+	{{- if hasTypedResponse $createAction}}
+	Create({{.Resource.Scope}} string, body any) (*api.{{responseGoType $createAction}}, error)
+	{{- else}}
+	Create({{.Resource.Scope}} string, body any) (json.RawMessage, error)
+	{{- end}}
+	{{- else}}
+	{{- if hasTypedResponse $createAction}}
+	Create(body any) (*api.{{responseGoType $createAction}}, error)
+	{{- else}}
+	Create(body any) (json.RawMessage, error)
+	{{- end}}
+	{{- end}}
+{{- end}}
+{{- if hasAction .Resource "update"}}
+	{{- $updateAction := getAction .Resource "update"}}
+	{{- if isScoped .Resource}}
+	{{- if hasTypedResponse $updateAction}}
+	Update({{.Resource.Scope}} string, id string, body any) (*api.{{responseGoType $updateAction}}, error)
+	{{- else}}
+	Update({{.Resource.Scope}} string, id string, body any) (json.RawMessage, error)
+	{{- end}}
+	{{- else}}
+	{{- if hasTypedResponse $updateAction}}
+	Update(id string, body any) (*api.{{responseGoType $updateAction}}, error)
+	{{- else}}
+	Update(id string, body any) (json.RawMessage, error)
+	{{- end}}
+	{{- end}}
+{{- end}}
+{{- if hasAction .Resource "delete"}}
+	{{- if isScoped .Resource}}
+	Delete({{.Resource.Scope}} string, id string) error
+	{{- else}}
+	Delete(id string) error
+	{{- end}}
+{{- end}}
+}
+
+type {{toLower .Resource.GoName}}Service struct {
+	client *client.Client
+}
+{{if hasAction .Resource "list"}}
+{{- $listAction := getAction .Resource "list"}}
+{{- if isScoped .Resource}}
+{{- if hasTypedResponse $listAction}}
+func (s *{{toLower .Resource.GoName}}Service) List({{.Resource.Scope}} string) (*api.{{responseGoType $listAction}}, error) {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}", url.PathEscape({{.Resource.Scope}}))
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	var resp api.{{responseGoType $listAction}}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parsing {{.Resource.Name}} list: %w", err)
+	}
+	return &resp, nil
+}
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) List({{.Resource.Scope}} string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}", url.PathEscape({{.Resource.Scope}}))
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data), nil
+}
+{{- end}}
+{{- else}}
+{{- if hasTypedResponse $listAction}}
+func (s *{{toLower .Resource.GoName}}Service) List() (*api.{{responseGoType $listAction}}, error) {
+	path := "/{{.Resource.Name}}"
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	var resp api.{{responseGoType $listAction}}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parsing {{.Resource.Name}} list: %w", err)
+	}
+	return &resp, nil
+}
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) List() (json.RawMessage, error) {
+	path := "/{{.Resource.Name}}"
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data), nil
+}
+{{- end}}
+{{- end}}
+{{end}}
+{{- if hasAction .Resource "get"}}
+{{- $getAction := getAction .Resource "get"}}
+{{- if isScoped .Resource}}
+{{- if hasTypedResponse $getAction}}
+func (s *{{toLower .Resource.GoName}}Service) Get({{.Resource.Scope}} string, id string) (*api.{{responseGoType $getAction}}, error) {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}/%s", url.PathEscape({{.Resource.Scope}}), url.PathEscape(id))
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	var resp api.{{responseGoType $getAction}}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parsing {{.Resource.Name}}: %w", err)
+	}
+	return &resp, nil
+}
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) Get({{.Resource.Scope}} string, id string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}/%s", url.PathEscape({{.Resource.Scope}}), url.PathEscape(id))
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data), nil
+}
+{{- end}}
+{{- else}}
+{{- if hasTypedResponse $getAction}}
+func (s *{{toLower .Resource.GoName}}Service) Get(id string) (*api.{{responseGoType $getAction}}, error) {
+	path := fmt.Sprintf("/{{.Resource.Name}}/%s", url.PathEscape(id))
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	var resp api.{{responseGoType $getAction}}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parsing {{.Resource.Name}}: %w", err)
+	}
+	return &resp, nil
+}
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) Get(id string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/{{.Resource.Name}}/%s", url.PathEscape(id))
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data), nil
+}
+{{- end}}
+{{- end}}
+{{end}}
+{{- if hasAction .Resource "create"}}
+{{- $createAction := getAction .Resource "create"}}
+{{- if isScoped .Resource}}
+{{- if hasTypedResponse $createAction}}
+func (s *{{toLower .Resource.GoName}}Service) Create({{.Resource.Scope}} string, body any) (*api.{{responseGoType $createAction}}, error) {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}", url.PathEscape({{.Resource.Scope}}))
+	data, err := s.client.Post(path, body)
+	if err != nil {
+		return nil, err
+	}
+	var resp api.{{responseGoType $createAction}}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("creating {{.Resource.Name}}: %w", err)
+	}
+	return &resp, nil
+}
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) Create({{.Resource.Scope}} string, body any) (json.RawMessage, error) {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}", url.PathEscape({{.Resource.Scope}}))
+	data, err := s.client.Post(path, body)
+	return json.RawMessage(data), err
+}
+{{- end}}
+{{- else}}
+{{- if hasTypedResponse $createAction}}
+func (s *{{toLower .Resource.GoName}}Service) Create(body any) (*api.{{responseGoType $createAction}}, error) {
+	path := "/{{.Resource.Name}}"
+	data, err := s.client.Post(path, body)
+	if err != nil {
+		return nil, err
+	}
+	var resp api.{{responseGoType $createAction}}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("creating {{.Resource.Name}}: %w", err)
+	}
+	return &resp, nil
+}
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) Create(body any) (json.RawMessage, error) {
+	path := "/{{.Resource.Name}}"
+	data, err := s.client.Post(path, body)
+	return json.RawMessage(data), err
+}
+{{- end}}
+{{- end}}
+{{end}}
+{{- if hasAction .Resource "update"}}
+{{- $updateAction := getAction .Resource "update"}}
+{{- if isScoped .Resource}}
+{{- if hasTypedResponse $updateAction}}
+func (s *{{toLower .Resource.GoName}}Service) Update({{.Resource.Scope}} string, id string, body any) (*api.{{responseGoType $updateAction}}, error) {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}/%s", url.PathEscape({{.Resource.Scope}}), url.PathEscape(id))
+	data, err := s.client.Put(path, body)
+	if err != nil {
+		return nil, err
+	}
+	var resp api.{{responseGoType $updateAction}}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("updating {{.Resource.Name}}: %w", err)
+	}
+	return &resp, nil
+}
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) Update({{.Resource.Scope}} string, id string, body any) (json.RawMessage, error) {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}/%s", url.PathEscape({{.Resource.Scope}}), url.PathEscape(id))
+	data, err := s.client.Put(path, body)
+	return json.RawMessage(data), err
+}
+{{- end}}
+{{- else}}
+{{- if hasTypedResponse $updateAction}}
+func (s *{{toLower .Resource.GoName}}Service) Update(id string, body any) (*api.{{responseGoType $updateAction}}, error) {
+	path := fmt.Sprintf("/{{.Resource.Name}}/%s", url.PathEscape(id))
+	data, err := s.client.Put(path, body)
+	if err != nil {
+		return nil, err
+	}
+	var resp api.{{responseGoType $updateAction}}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("updating {{.Resource.Name}}: %w", err)
+	}
+	return &resp, nil
+}
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) Update(id string, body any) (json.RawMessage, error) {
+	path := fmt.Sprintf("/{{.Resource.Name}}/%s", url.PathEscape(id))
+	data, err := s.client.Put(path, body)
+	return json.RawMessage(data), err
+}
+{{- end}}
+{{- end}}
+{{end}}
+{{- if hasAction .Resource "delete"}}
+{{- if isScoped .Resource}}
+func (s *{{toLower .Resource.GoName}}Service) Delete({{.Resource.Scope}} string, id string) error {
+	path := fmt.Sprintf("/%s/{{.Resource.Name}}/%s", url.PathEscape({{.Resource.Scope}}), url.PathEscape(id))
+{{- else}}
+func (s *{{toLower .Resource.GoName}}Service) Delete(id string) error {
+	path := fmt.Sprintf("/{{.Resource.Name}}/%s", url.PathEscape(id))
+{{- end}}
+	_, err := s.client.Delete(path)
+	return err
+}
+{{end}}

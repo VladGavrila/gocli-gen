@@ -1,0 +1,13 @@
+module {{.Module}}
+
+go 1.23
+
+require (
+{{- if .TUI}}
+	github.com/charmbracelet/bubbles v0.20.0
+	github.com/charmbracelet/bubbletea v1.2.4
+{{- end}}
+	github.com/charmbracelet/lipgloss v1.0.0
+	github.com/spf13/cobra v1.8.1
+	gopkg.in/yaml.v3 v3.0.1
+)

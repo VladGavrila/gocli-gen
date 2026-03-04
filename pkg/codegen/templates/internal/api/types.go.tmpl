@@ -1,0 +1,13 @@
+package api
+
+// Generated API types from OpenAPI spec.
+// API: {{.APITitle}} v{{.APIVersion}}
+
+{{range .Schemas}}
+// {{.GoName}} represents the {{.Name}} schema.
+type {{.GoName}} struct {
+{{- range .Fields}}
+	{{.GoName}} {{.GoType}} `json:"{{.JSONTag}},omitempty"`
+{{- end}}
+}
+{{end}}

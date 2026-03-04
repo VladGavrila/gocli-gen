@@ -1,0 +1,306 @@
+package client
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+// AuthProvider applies authentication to HTTP requests.
+type AuthProvider interface {
+	ApplyAuth(req *http.Request)
+}
+
+// TokenAuth authenticates with "Token <value>" header.
+type TokenAuth struct {
+	Token string
+}
+
+func (a *TokenAuth) ApplyAuth(req *http.Request) {
+	req.Header.Set("Authorization", "Token "+a.Token)
+}
+
+// BearerAuth authenticates with "Bearer <value>" header.
+type BearerAuth struct {
+	Token string
+}
+
+func (a *BearerAuth) ApplyAuth(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+a.Token)
+}
+
+// BasicAuth authenticates with HTTP Basic auth.
+type BasicAuth struct {
+	Username string
+	Password string
+}
+
+func (a *BasicAuth) ApplyAuth(req *http.Request) {
+	req.SetBasicAuth(a.Username, a.Password)
+}
+
+// APIKeyAuth authenticates with a custom header.
+type APIKeyAuth struct {
+	HeaderName string
+	Key        string
+}
+
+func (a *APIKeyAuth) ApplyAuth(req *http.Request) {
+	req.Header.Set(a.HeaderName, a.Key)
+}
+
+// Client is the HTTP transport layer for the API.
+type Client struct {
+	baseURL    string
+	auth       AuthProvider
+	debug      bool
+	httpClient *http.Client
+}
+
+// New creates a new API client. The baseURL should be the full API base
+// (e.g. "http://host:8080/rest/1"). No path suffix is appended automatically.
+func New(baseURL string, auth AuthProvider, debug bool) *Client {
+	baseURL = strings.TrimRight(baseURL, "/")
+	return &Client{
+		baseURL: baseURL,
+		auth:    auth,
+		debug:   debug,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+// BaseURL returns the configured base URL.
+func (c *Client) BaseURL() string {
+	return c.baseURL
+}
+
+func (c *Client) newRequest(method, path string, body io.Reader) (*http.Request, error) {
+	url := c.baseURL + path
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.auth.ApplyAuth(req)
+	if body != nil && method != http.MethodGet {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
+func (c *Client) debugJSON(v any) []byte {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+	return bytes.TrimRight(buf.Bytes(), "\n")
+}
+
+func (c *Client) debugRequest(req *http.Request, body []byte) {
+	if !c.debug {
+		return
+	}
+	entry := map[string]any{
+		"type":   "request",
+		"method": req.Method,
+		"url":    req.URL.String(),
+	}
+	if len(body) > 0 {
+		var parsed any
+		if json.Unmarshal(body, &parsed) == nil {
+			entry["body"] = parsed
+		} else {
+			entry["body"] = string(body)
+		}
+	}
+	fmt.Fprintln(os.Stderr, string(c.debugJSON(entry)))
+}
+
+func (c *Client) debugResponse(status int, body []byte) {
+	if !c.debug {
+		return
+	}
+	entry := map[string]any{
+		"type":   "response",
+		"status": status,
+	}
+	if len(body) > 0 {
+		var parsed any
+		if json.Unmarshal(body, &parsed) == nil {
+			entry["body"] = parsed
+		} else {
+			entry["body"] = string(body)
+		}
+	}
+	fmt.Fprintln(os.Stderr, string(c.debugJSON(entry)))
+}
+
+// Do executes an HTTP request and returns the response body.
+func (c *Client) Do(req *http.Request) ([]byte, error) {
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	c.debugResponse(resp.StatusCode, data)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       string(data),
+		}
+	}
+	return data, nil
+}
+
+// Get performs a GET request to the given path.
+func (c *Client) Get(path string) ([]byte, error) {
+	req, err := c.newRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.debugRequest(req, nil)
+	return c.Do(req)
+}
+
+// Post performs a POST request with a JSON body.
+func (c *Client) Post(path string, body any) ([]byte, error) {
+	var r io.Reader
+	var bodyBytes []byte
+	if body != nil {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(body); err != nil {
+			return nil, fmt.Errorf("marshaling request body: %w", err)
+		}
+		bodyBytes = bytes.TrimRight(buf.Bytes(), "\n")
+		r = bytes.NewReader(bodyBytes)
+	}
+	req, err := c.newRequest(http.MethodPost, path, r)
+	if err != nil {
+		return nil, err
+	}
+	c.debugRequest(req, bodyBytes)
+	return c.Do(req)
+}
+
+// Put performs a PUT request with a JSON body.
+func (c *Client) Put(path string, body any) ([]byte, error) {
+	var r io.Reader
+	var bodyBytes []byte
+	if body != nil {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(body); err != nil {
+			return nil, fmt.Errorf("marshaling request body: %w", err)
+		}
+		bodyBytes = bytes.TrimRight(buf.Bytes(), "\n")
+		r = bytes.NewReader(bodyBytes)
+	}
+	req, err := c.newRequest(http.MethodPut, path, r)
+	if err != nil {
+		return nil, err
+	}
+	c.debugRequest(req, bodyBytes)
+	return c.Do(req)
+}
+
+// Delete performs a DELETE request.
+func (c *Client) Delete(path string) ([]byte, error) {
+	req, err := c.newRequest(http.MethodDelete, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.debugRequest(req, nil)
+	return c.Do(req)
+}
+
+// PostForm performs a POST request with a multipart form body.
+func (c *Client) PostForm(path string, fields map[string]string, fileName string, fileData io.Reader) ([]byte, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	for k, v := range fields {
+		if err := writer.WriteField(k, v); err != nil {
+			return nil, fmt.Errorf("writing form field %s: %w", k, err)
+		}
+	}
+
+	if fileData != nil {
+		part, err := writer.CreateFormFile("file", fileName)
+		if err != nil {
+			return nil, fmt.Errorf("creating form file: %w", err)
+		}
+		if _, err := io.Copy(part, fileData); err != nil {
+			return nil, fmt.Errorf("copying file data: %w", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("closing multipart writer: %w", err)
+	}
+
+	url := c.baseURL + path
+	req, err := http.NewRequest(http.MethodPost, url, &buf)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.auth.ApplyAuth(req)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	if c.debug {
+		entry := map[string]any{
+			"type":   "request",
+			"method": req.Method,
+			"url":    req.URL.String(),
+			"body":   fmt.Sprintf("<multipart form, file=%s>", fileName),
+		}
+		out, _ := json.MarshalIndent(entry, "", "  ")
+		fmt.Fprintln(os.Stderr, string(out))
+	}
+	return c.Do(req)
+}
+
+// GetRaw performs a GET request and returns the raw response (for file downloads).
+func (c *Client) GetRaw(path string) (*http.Response, error) {
+	req, err := c.newRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.debugRequest(req, nil)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		c.debugResponse(resp.StatusCode, data)
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       string(data),
+		}
+	}
+	if c.debug {
+		fmt.Fprintf(os.Stderr, "{\"type\":\"response\",\"status\":%d,\"body\":\"<binary stream>\"}\n", resp.StatusCode)
+	}
+	return resp, nil
+}

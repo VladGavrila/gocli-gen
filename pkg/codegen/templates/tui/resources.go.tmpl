@@ -1,0 +1,69 @@
+package tui
+
+import (
+	"encoding/json"
+
+	"{{.Module}}/internal/service"
+)
+
+// TUIResource describes a resource the TUI can display.
+type TUIResource struct {
+	Name   string
+	Plural string
+	Scoped bool
+	ListFn func(scope string) ([]byte, error) // nil if no list action
+	GetFn  func(scope, id string) ([]byte, error) // nil if no get action
+}
+
+// TUIResources returns all available resources for the TUI.
+func TUIResources(svc *service.AppService) []TUIResource {
+	return []TUIResource{
+{{- range .Resources}}
+{{- $hasList := hasAction . "list"}}
+{{- $hasGet := hasAction . "get"}}
+{{- if or $hasList $hasGet}}
+		{
+			Name:   "{{.GoName}}",
+			Plural: "{{.GoPlural}}",
+			Scoped: {{if isScoped .}}true{{else}}false{{end}},
+{{- if $hasList}}
+{{- $listAction := getAction . "list"}}
+			ListFn: func(scope string) ([]byte, error) {
+{{- if hasTypedResponse $listAction}}
+				data, err := svc.{{.GoPlural}}.List({{if isScoped .}}scope{{end}})
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(data)
+{{- else}}
+				data, err := svc.{{.GoPlural}}.List({{if isScoped .}}scope{{end}})
+				if err != nil {
+					return nil, err
+				}
+				return []byte(data), nil
+{{- end}}
+			},
+{{- end}}
+{{- if $hasGet}}
+{{- $getAction := getAction . "get"}}
+			GetFn: func(scope, id string) ([]byte, error) {
+{{- if hasTypedResponse $getAction}}
+				data, err := svc.{{.GoPlural}}.Get({{if isScoped .}}scope, {{end}}id)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(data)
+{{- else}}
+				data, err := svc.{{.GoPlural}}.Get({{if isScoped .}}scope, {{end}}id)
+				if err != nil {
+					return nil, err
+				}
+				return []byte(data), nil
+{{- end}}
+			},
+{{- end}}
+		},
+{{- end}}
+{{- end}}
+	}
+}

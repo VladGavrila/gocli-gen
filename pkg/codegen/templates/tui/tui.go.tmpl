@@ -1,0 +1,128 @@
+package tui
+
+import (
+	"fmt"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"{{.Module}}/internal/service"
+)
+
+// Screen identifies which screen is currently active.
+type Screen int
+
+const (
+	ScreenHome Screen = iota
+	ScreenList
+	ScreenDetail
+)
+
+// AppModel is the top-level Bubble Tea model that routes between screens.
+type AppModel struct {
+	resources     []TUIResource
+	scope         string
+	currentScreen Screen
+	home          HomeModel
+	list          ListModel
+	detail        DetailModel
+	width         int
+	height        int
+	err           error
+}
+
+// NewAppModel creates the root TUI model.
+func NewAppModel(svc *service.AppService, scope string) AppModel {
+	resources := TUIResources(svc)
+	return AppModel{
+		resources:     resources,
+		scope:         scope,
+		currentScreen: ScreenHome,
+		home:          NewHomeModel(resources),
+	}
+}
+
+func (m AppModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+	case errMsg:
+		m.err = msg.err
+		return m, nil
+	case selectResourceMsg:
+		res := m.resources[msg.index]
+		m.list = NewListModel(res, m.scope, m.width, m.height)
+		m.currentScreen = ScreenList
+		return m, m.list.Init()
+	case selectItemMsg:
+		// Find the current resource from the list screen
+		res := m.list.resource
+		if res.GetFn != nil {
+			m.detail = NewDetailModel(res, m.scope, msg.id, m.width, m.height)
+			m.currentScreen = ScreenDetail
+			return m, m.detail.Init()
+		}
+		return m, nil
+	case backMsg:
+		switch m.currentScreen {
+		case ScreenDetail:
+			m.currentScreen = ScreenList
+			return m, nil
+		case ScreenList:
+			m.currentScreen = ScreenHome
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	switch m.currentScreen {
+	case ScreenHome:
+		var homeModel tea.Model
+		homeModel, cmd = m.home.Update(msg)
+		m.home = homeModel.(HomeModel)
+	case ScreenList:
+		var listModel tea.Model
+		listModel, cmd = m.list.Update(msg)
+		m.list = listModel.(ListModel)
+	case ScreenDetail:
+		var detailModel tea.Model
+		detailModel, cmd = m.detail.Update(msg)
+		m.detail = detailModel.(DetailModel)
+	}
+	return m, cmd
+}
+
+func (m AppModel) View() string {
+	if m.err != nil {
+		return errorStyle.Render(fmt.Sprintf("Error: %v", m.err))
+	}
+
+	switch m.currentScreen {
+	case ScreenList:
+		return m.list.View()
+	case ScreenDetail:
+		return m.detail.View()
+	default:
+		return m.home.View()
+	}
+}
+
+// Run starts the TUI application.
+func Run(svc *service.AppService, scope string) error {
+	p := tea.NewProgram(NewAppModel(svc, scope), tea.WithAltScreen())
+	_, err := p.Run()
+	return err
+}
+
+// Message types for screen navigation.
+type selectResourceMsg struct{ index int }
+type selectItemMsg struct{ id string }
+type backMsg struct{}
+type errMsg struct{ err error }

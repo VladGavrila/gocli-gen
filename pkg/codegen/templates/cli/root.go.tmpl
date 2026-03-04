@@ -1,0 +1,135 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+
+	"{{.Module}}/internal/client"
+	"{{.Module}}/internal/config"
+	"{{.Module}}/internal/service"
+	"{{.Module}}/internal/upgrade"
+{{- if .TUI}}
+	"{{.Module}}/tui"
+{{- end}}
+	"github.com/spf13/cobra"
+)
+
+// Version is set at build time via ldflags.
+var Version = "0.1.0"
+
+var (
+	flagURL     string
+	flagToken   string
+	flagOutput  string
+	flagProject string
+	flagDebug   bool
+	flagUpgrade bool
+{{- if .TUI}}
+	flagTUI     bool
+{{- end}}
+)
+
+var rootCmd = &cobra.Command{
+	Use:           "{{.Name}}",
+	Short:         "{{.APITitle}} CLI",
+	Long:          "{{.Name}} is a command-line tool for the {{.APITitle}}.",
+	Version:       Version,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Run: func(cmd *cobra.Command, args []string) {
+		if flagUpgrade {
+			if err := upgrade.Run(Version); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			return
+		}
+{{- if .TUI}}
+		if flagTUI {
+			svc, err := newService()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			scope, _ := requireProject()
+			if err := tui.Run(svc, scope); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			return
+		}
+{{- end}}
+		cmd.Help() //nolint:errcheck
+	},
+}
+
+func init() {
+	rootCmd.Flags().BoolVar(&flagUpgrade, "upgrade", false, "upgrade {{.Name}} to the latest release")
+{{- if .TUI}}
+	rootCmd.Flags().BoolVar(&flagTUI, "tui", false, "launch interactive TUI")
+{{- end}}
+
+	rootCmd.PersistentFlags().StringVar(&flagURL, "url", "", "Instance URL (env: {{.EnvPrefix}}_URL)")
+	rootCmd.PersistentFlags().StringVar(&flagToken, "token", "", "API token (env: {{.EnvPrefix}}_TOKEN)")
+	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "table", "Output format: table, json, text")
+	rootCmd.PersistentFlags().StringVarP(&flagProject, "project", "p", "", "Project short label (env: {{.EnvPrefix}}_DEFAULT_PROJECT)")
+	rootCmd.PersistentFlags().BoolVar(&flagDebug, "debug", false, "Print HTTP request and response details to stderr")
+}
+
+// Execute runs the root command.
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+}
+
+// getOutputFormat returns the configured output format.
+func getOutputFormat() string {
+	return flagOutput
+}
+
+// requireProject returns the project flag or default project, or errors.
+func requireProject() (string, error) {
+	if flagProject != "" {
+		return flagProject, nil
+	}
+	cfg, err := config.Load()
+	if err == nil && cfg.DefaultProject != "" {
+		return cfg.DefaultProject, nil
+	}
+	return "", fmt.Errorf("project is required (use --project or set default_project in config)")
+}
+
+// newAuthProvider creates an AuthProvider based on config auth_type.
+func newAuthProvider(cfg *config.Config) client.AuthProvider {
+	switch cfg.AuthType {
+	case config.AuthBearer:
+		return &client.BearerAuth{Token: cfg.Token}
+	case config.AuthBasic:
+		return &client.BasicAuth{Username: cfg.Token}
+	case config.AuthAPIKey:
+		return &client.APIKeyAuth{HeaderName: "X-API-Key", Key: cfg.Token}
+	default:
+		return &client.TokenAuth{Token: cfg.Token}
+	}
+}
+
+// newService creates an AppService from config/flags.
+func newService() (*service.AppService, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	if flagURL != "" {
+		cfg.URL = flagURL
+	}
+	if flagToken != "" {
+		cfg.Token = flagToken
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	c := client.New(cfg.URL, newAuthProvider(cfg), flagDebug)
+	return service.New(c), nil
+}

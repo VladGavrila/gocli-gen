@@ -1,0 +1,341 @@
+package tui
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// ListModel displays a table of items for a resource.
+type ListModel struct {
+	resource TUIResource
+	scope    string
+	table    table.Model
+	filter   FilterModel
+	allRows  []table.Row
+	columns  []table.Column
+	loading  bool
+	err      error
+	width    int
+	height   int
+	idField  string // key used as the ID column
+}
+
+type listDataMsg struct {
+	columns []table.Column
+	rows    []table.Row
+	idField string
+	err     error
+}
+
+// NewListModel creates a new list screen for a resource.
+func NewListModel(res TUIResource, scope string, width, height int) ListModel {
+	return ListModel{
+		resource: res,
+		scope:    scope,
+		filter:   NewFilterModel(),
+		loading:  true,
+		width:    width,
+		height:   height,
+	}
+}
+
+func (m ListModel) Init() tea.Cmd {
+	return func() tea.Msg {
+		if m.resource.ListFn == nil {
+			return listDataMsg{err: fmt.Errorf("list not available for %s", m.resource.Name)}
+		}
+		data, err := m.resource.ListFn(m.scope)
+		if err != nil {
+			return listDataMsg{err: err}
+		}
+		columns, rows, idField := parseJSONToTable(data)
+		return listDataMsg{columns: columns, rows: rows, idField: idField}
+	}
+}
+
+func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case listDataMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.columns = msg.columns
+		m.allRows = msg.rows
+		m.idField = msg.idField
+		m.table = m.buildTable(msg.columns, msg.rows)
+		return m, nil
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		if len(m.columns) > 0 {
+			m.table = m.buildTable(m.columns, m.filteredRows())
+		}
+	case tea.KeyMsg:
+		if m.filter.IsActive() {
+			if msg.String() == "esc" {
+				m.filter.Deactivate()
+				m.table = m.buildTable(m.columns, m.allRows)
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.filter, cmd = m.filter.Update(msg)
+			// Re-filter rows
+			m.table = m.buildTable(m.columns, m.filteredRows())
+			return m, cmd
+		}
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			return m, func() tea.Msg { return backMsg{} }
+		case "/":
+			m.filter.Activate()
+			return m, nil
+		case "enter":
+			row := m.table.SelectedRow()
+			if len(row) > 0 {
+				// Use the ID field value
+				id := m.getIDFromRow(row)
+				return m, func() tea.Msg { return selectItemMsg{id: id} }
+			}
+		}
+	}
+
+	if !m.loading && m.err == nil && len(m.columns) > 0 {
+		var cmd tea.Cmd
+		m.table, cmd = m.table.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m ListModel) View() string {
+	if m.loading {
+		return titleStyle.Render(fmt.Sprintf("Loading %s...", m.resource.Plural))
+	}
+	if m.err != nil {
+		return errorStyle.Render(fmt.Sprintf("Error: %v", m.err)) + helpStyle.Render("\n\n  esc back • q quit")
+	}
+
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(m.resource.Plural))
+	b.WriteString("\n")
+
+	if m.filter.IsActive() {
+		b.WriteString(m.filter.View())
+		b.WriteString("\n")
+	}
+
+	b.WriteString(m.table.View())
+
+	help := "\n  ↑/↓ navigate • / filter • esc back"
+	if m.resource.GetFn != nil {
+		help += " • enter details"
+	}
+	help += " • q quit"
+	b.WriteString(helpStyle.Render(help))
+	return b.String()
+}
+
+func (m ListModel) buildTable(cols []table.Column, rows []table.Row) table.Model {
+	// Adjust column widths to fit terminal
+	adjustedCols := adjustColumnWidths(cols, m.width)
+
+	t := table.New(
+		table.WithColumns(adjustedCols),
+		table.WithRows(rows),
+		table.WithFocused(true),
+	)
+
+	// Set table height (leave room for title, filter, help)
+	tableHeight := m.height - 6
+	if m.filter.IsActive() {
+		tableHeight -= 2
+	}
+	if tableHeight < 3 {
+		tableHeight = 3
+	}
+	t.SetHeight(tableHeight)
+
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(secondaryColor).
+		BorderBottom(true).
+		Bold(true)
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("229")).
+		Background(lipgloss.Color("57"))
+	t.SetStyles(s)
+
+	return t
+}
+
+func (m ListModel) filteredRows() []table.Row {
+	if !m.filter.IsActive() || m.filter.Value() == "" {
+		return m.allRows
+	}
+	var result []table.Row
+	for _, row := range m.allRows {
+		for _, cell := range row {
+			if m.filter.Matches(cell) {
+				result = append(result, row)
+				break
+			}
+		}
+	}
+	return result
+}
+
+func (m ListModel) getIDFromRow(row table.Row) string {
+	if len(row) == 0 {
+		return ""
+	}
+	// Find ID column index
+	for i, col := range m.columns {
+		if col.Title == m.idField && i < len(row) {
+			return row[i]
+		}
+	}
+	// Fallback to first column
+	return row[0]
+}
+
+// parseJSONToTable converts JSON bytes into table columns and rows.
+// It handles both arrays and objects containing an array field.
+func parseJSONToTable(data []byte) ([]table.Column, []table.Row, string) {
+	var items []map[string]any
+
+	// Try as array first
+	if err := json.Unmarshal(data, &items); err != nil {
+		// Try as object — find first array field
+		var obj map[string]any
+		if err := json.Unmarshal(data, &obj); err != nil {
+			return nil, nil, ""
+		}
+		for _, v := range obj {
+			if arr, ok := v.([]any); ok {
+				for _, elem := range arr {
+					if m, ok := elem.(map[string]any); ok {
+						items = append(items, m)
+					}
+				}
+				if len(items) > 0 {
+					break
+				}
+			}
+		}
+	}
+
+	if len(items) == 0 {
+		return nil, nil, ""
+	}
+
+	// Extract keys from the first item, prioritize ID-like fields
+	keys := extractSortedKeys(items[0])
+
+	// Build columns
+	columns := make([]table.Column, len(keys))
+	for i, k := range keys {
+		columns[i] = table.Column{Title: k, Width: len(k) + 2}
+	}
+
+	// Build rows
+	rows := make([]table.Row, len(items))
+	for i, item := range items {
+		row := make(table.Row, len(keys))
+		for j, k := range keys {
+			row[j] = formatValue(item[k])
+		}
+		rows[i] = row
+	}
+
+	// Determine ID field
+	idField := keys[0]
+	for _, k := range keys {
+		kl := strings.ToLower(k)
+		if kl == "id" || strings.HasSuffix(kl, "id") || strings.HasSuffix(kl, "_id") {
+			idField = k
+			break
+		}
+	}
+
+	return columns, rows, idField
+}
+
+// extractSortedKeys returns keys with ID-like fields first, then alphabetical.
+func extractSortedKeys(item map[string]any) []string {
+	var idKeys, otherKeys []string
+	for k, v := range item {
+		// Skip nested objects/arrays for table display
+		switch v.(type) {
+		case map[string]any, []any:
+			continue
+		}
+		kl := strings.ToLower(k)
+		if kl == "id" || strings.HasSuffix(kl, "id") || strings.HasSuffix(kl, "_id") {
+			idKeys = append(idKeys, k)
+		} else {
+			otherKeys = append(otherKeys, k)
+		}
+	}
+	sort.Strings(idKeys)
+	sort.Strings(otherKeys)
+	return append(idKeys, otherKeys...)
+}
+
+// formatValue converts a JSON value to a display string.
+func formatValue(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	case float64:
+		if val == float64(int64(val)) {
+			return fmt.Sprintf("%d", int64(val))
+		}
+		return fmt.Sprintf("%.2f", val)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
+// adjustColumnWidths distributes available width across columns.
+func adjustColumnWidths(cols []table.Column, termWidth int) []table.Column {
+	if len(cols) == 0 || termWidth <= 0 {
+		return cols
+	}
+	// Reserve some space for borders and padding
+	available := termWidth - 4
+	if available < len(cols)*4 {
+		available = len(cols) * 4
+	}
+	perCol := available / len(cols)
+	if perCol < 4 {
+		perCol = 4
+	}
+	// Cap at reasonable max
+	if perCol > 40 {
+		perCol = 40
+	}
+	result := make([]table.Column, len(cols))
+	for i, c := range cols {
+		result[i] = table.Column{Title: c.Title, Width: perCol}
+	}
+	return result
+}

@@ -1,0 +1,13 @@
+name: {{.Name}}
+module: {{.Module}}
+{{- if .GithubRepo}}
+github_repo: {{.GithubRepo}}
+{{- end}}
+env_prefix: {{.EnvPrefix}}
+{{- if .BasePath}}
+base_path_suffix: {{.BasePath}}
+{{- end}}
+auth_type: {{.Auth.Type}}
+{{- if .Auth.HeaderPrefix}}
+auth_header: "{{.Auth.HeaderPrefix}}"
+{{- end}}

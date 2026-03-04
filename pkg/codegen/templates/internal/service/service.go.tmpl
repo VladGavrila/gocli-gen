@@ -1,0 +1,21 @@
+package service
+
+import "{{.Module}}/internal/client"
+
+// AppService is the aggregate service providing access to all domain services.
+type AppService struct {
+	Client *client.Client
+{{- range .Resources}}
+	{{.GoPlural}} {{.GoName}}Service
+{{- end}}
+}
+
+// New creates an AppService with all domain services wired up.
+func New(c *client.Client) *AppService {
+	return &AppService{
+		Client: c,
+{{- range .Resources}}
+		{{.GoPlural}}: &{{toLower .GoName}}Service{client: c},
+{{- end}}
+	}
+}

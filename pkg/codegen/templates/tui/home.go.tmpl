@@ -1,0 +1,74 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// HomeModel displays a list of available resources for the user to pick from.
+type HomeModel struct {
+	resources []TUIResource
+	cursor    int
+}
+
+// NewHomeModel creates a new home screen.
+func NewHomeModel(resources []TUIResource) HomeModel {
+	return HomeModel{
+		resources: resources,
+	}
+}
+
+func (m HomeModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.resources)-1 {
+				m.cursor++
+			}
+		case "enter":
+			if m.cursor < len(m.resources) {
+				idx := m.cursor
+				return m, func() tea.Msg {
+					return selectResourceMsg{index: idx}
+				}
+			}
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m HomeModel) View() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("Resources"))
+	b.WriteString("\n\n")
+
+	for i, res := range m.resources {
+		cursor := "  "
+		style := normalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		label := res.Plural
+		if res.Scoped {
+			label += " (scoped)"
+		}
+		b.WriteString(fmt.Sprintf("%s%s\n", cursor, style.Render(label)))
+	}
+
+	b.WriteString(helpStyle.Render("\n  ↑/↓ navigate • enter select • q quit"))
+	return b.String()
+}

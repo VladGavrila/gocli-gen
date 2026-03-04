@@ -1,0 +1,78 @@
+package cli
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strings"
+
+	"{{.Module}}/internal/config"
+	"github.com/spf13/cobra"
+)
+
+func init() {
+	rootCmd.AddCommand(configCmd)
+	configCmd.AddCommand(configInitCmd)
+	configCmd.AddCommand(configShowCmd)
+}
+
+var configCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Manage configuration",
+}
+
+var configInitCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize configuration interactively",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		reader := bufio.NewReader(os.Stdin)
+
+		fmt.Print("Instance URL: ")
+		url, _ := reader.ReadString('\n')
+		url = strings.TrimSpace(url)
+
+		fmt.Print("API Token: ")
+		token, _ := reader.ReadString('\n')
+		token = strings.TrimSpace(token)
+
+		fmt.Print("Default Project (optional): ")
+		project, _ := reader.ReadString('\n')
+		project = strings.TrimSpace(project)
+
+		cfg := &config.Config{
+			URL:            url,
+			Token:          token,
+			DefaultProject: project,
+		}
+
+		if err := config.Save(cfg); err != nil {
+			return err
+		}
+
+		path, _ := config.ConfigPath()
+		fmt.Printf("Configuration saved to %s\n", path)
+		return nil
+	},
+}
+
+var configShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Show current configuration",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+
+		path, _ := config.ConfigPath()
+		fmt.Printf("Config file: %s\n", path)
+		fmt.Printf("URL:         %s\n", cfg.URL)
+		if cfg.Token != "" {
+			fmt.Printf("Token:       %s...%s\n", cfg.Token[:4], cfg.Token[len(cfg.Token)-4:])
+		} else {
+			fmt.Printf("Token:       (not set)\n")
+		}
+		fmt.Printf("Project:     %s\n", cfg.DefaultProject)
+		return nil
+	},
+}

@@ -1,0 +1,191 @@
+package tui
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// DetailModel displays key-value details of a single resource item.
+type DetailModel struct {
+	resource TUIResource
+	scope    string
+	id       string
+	viewport viewport.Model
+	fields   []detailField
+	loading  bool
+	ready    bool
+	err      error
+	width    int
+	height   int
+}
+
+type detailField struct {
+	label string
+	value string
+}
+
+type detailLoadedMsg struct {
+	fields []detailField
+	err    error
+}
+
+// NewDetailModel creates a new detail screen.
+func NewDetailModel(res TUIResource, scope, id string, width, height int) DetailModel {
+	return DetailModel{
+		resource: res,
+		scope:    scope,
+		id:       id,
+		loading:  true,
+		width:    width,
+		height:   height,
+	}
+}
+
+func (m DetailModel) Init() tea.Cmd {
+	return func() tea.Msg {
+		if m.resource.GetFn == nil {
+			return detailLoadedMsg{err: fmt.Errorf("get not available for %s", m.resource.Name)}
+		}
+		data, err := m.resource.GetFn(m.scope, m.id)
+		if err != nil {
+			return detailLoadedMsg{err: err}
+		}
+		fields := parseJSONToFields(data)
+		return detailLoadedMsg{fields: fields}
+	}
+}
+
+func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case detailLoadedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.fields = msg.fields
+		m.viewport = m.buildViewport()
+		m.ready = true
+		return m, nil
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		if m.ready {
+			m.viewport = m.buildViewport()
+		}
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc", "backspace":
+			return m, func() tea.Msg { return backMsg{} }
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		}
+	}
+
+	if m.ready {
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m DetailModel) View() string {
+	if m.loading {
+		return titleStyle.Render(fmt.Sprintf("Loading %s %s...", m.resource.Name, m.id))
+	}
+	if m.err != nil {
+		return errorStyle.Render(fmt.Sprintf("Error: %v", m.err)) + helpStyle.Render("\n\n  esc back • q quit")
+	}
+
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(fmt.Sprintf("%s %s", m.resource.Name, m.id)))
+	b.WriteString("\n")
+	b.WriteString(m.viewport.View())
+	b.WriteString(helpStyle.Render("\n  ↑/↓ scroll • esc back • q quit"))
+	return b.String()
+}
+
+func (m DetailModel) buildViewport() viewport.Model {
+	vpHeight := m.height - 5
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+	vpWidth := m.width
+	if vpWidth <= 0 {
+		vpWidth = 80
+	}
+
+	vp := viewport.New(vpWidth, vpHeight)
+
+	var b strings.Builder
+	// Find max label width for alignment
+	maxLabel := 0
+	for _, f := range m.fields {
+		if len(f.label) > maxLabel {
+			maxLabel = len(f.label)
+		}
+	}
+
+	for _, f := range m.fields {
+		label := subtitleStyle.Render(fmt.Sprintf("%-*s", maxLabel, f.label))
+		b.WriteString(fmt.Sprintf("  %s  %s\n", label, normalStyle.Render(f.value)))
+	}
+
+	vp.SetContent(b.String())
+	return vp
+}
+
+// parseJSONToFields converts JSON bytes into key-value pairs for display.
+func parseJSONToFields(data []byte) []detailField {
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return []detailField{
+			{label: "Raw", value: string(data)},
+		}
+	}
+	return flattenObject(obj, "")
+}
+
+// flattenObject flattens a JSON object one level deep into key-value pairs.
+func flattenObject(obj map[string]any, prefix string) []detailField {
+	var idFields, otherFields []detailField
+	var keys []string
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := obj[k]
+		label := k
+		if prefix != "" {
+			label = prefix + "." + k
+		}
+
+		switch val := v.(type) {
+		case map[string]any:
+			// Flatten one level
+			nested := flattenObject(val, label)
+			otherFields = append(otherFields, nested...)
+		case []any:
+			// Show array as JSON
+			jsonBytes, _ := json.Marshal(val)
+			otherFields = append(otherFields, detailField{label: label, value: string(jsonBytes)})
+		default:
+			f := detailField{label: label, value: formatValue(v)}
+			kl := strings.ToLower(k)
+			if kl == "id" || strings.HasSuffix(kl, "id") || strings.HasSuffix(kl, "_id") {
+				idFields = append(idFields, f)
+			} else {
+				otherFields = append(otherFields, f)
+			}
+		}
+	}
+	return append(idFields, otherFields...)
+}
